@@ -6,6 +6,7 @@ import logging
 import logging.config
 import time
 import random
+from collections import defaultdict
 
 from colorama import Fore
 from lzstring import LZString
@@ -67,7 +68,7 @@ class BOT:
         """
 
         self.player = {}
-        self.others = {}
+        self.others = defaultdict(dict)
         self.inChatRoom = ""
         self.chatrooms = None
         self.appearance = json.loads(
@@ -78,17 +79,21 @@ class BOT:
         self.last_keepalive = 0
         self.is_logged_in = False
         self.current_chatroom = {}
-        self.event_queue = asyncio.Queue()
+        self.send_event_queue = asyncio.Queue()
+        self.received_event_queue = asyncio.Queue()
         self.account = (username, password)
         self.chatroom = chatroom
         self.last_received = 0
-        self.background_tasks = []
-        self.sender = None
 
-        self.register_handlers()  # 注册event响应事件
+        # self.sender = asyncio.create_task(self.sio_event_sender())
+        # self.event_handler = None
+        # self.register_handlers()  # 注册event响应事件
+
+        self.background_tasks = dict.fromkeys(["sender","event_handler","keep_alive"])
+        self.background_tasks['sender'] = asyncio.create_task(self.sio_event_sender())
+        self.background_tasks['event_handler'] = self.register_handlers()
         # self.sio.start_background_task(self.sio_event_sender) # 开始发送event
-        self.sender = asyncio.create_task(self.sio_event_sender())
-        self.background_tasks.append(self.sender)
+        
 
     @staticmethod
     def exit_with_error(status, wait=3):
@@ -125,7 +130,7 @@ class BOT:
     async def sio_event_sender(self):
         while True:
             try:
-                event, data = await self.event_queue.get()
+                event, data = await self.send_event_queue.get()
                 await self.sio.emit(event, data)
                 await asyncio.sleep(0.1)
             except asyncio.CancelledError:
@@ -137,7 +142,7 @@ class BOT:
         if now:
             await self.sio.emit(event, data)
         else:
-            self.event_queue.put_nowait((event, data))
+            self.send_event_queue.put_nowait((event, data))
 
     async def account_update(self, data):
         # self.logger.debug("updating account data to avoid being kicked out")
@@ -348,13 +353,14 @@ class BOT:
             if time.time() - self.last_keepalive > 300:
                 self.last_keepalive = time.time()
                 await self.do_keep_alive()
+                self.logger.debug(f"last receive event time: {self.last_received}, now: {time.time()}")
             else:
                 await asyncio.sleep(60)
 
             # 踢出检测：如果在30分钟内没有收到服务器的任何消息，就是被踢出了
-            if (now := time.time()) - self.last_received >= 1800:
+            if (now := time.time()) - self.last_received >= 900:
                 self.logger.error("疑似掉线，正在退出")
-                self.last_received = now  # 防止再次发送
+                # self.last_received = now  # 防止再次发送
                 await self.disconnect()
 
     # don't use this function inside the main loop. use keep_alive() to call with an interval
@@ -390,6 +396,7 @@ class BOT:
                     await self.update_description(self.player["Description"])
             case 2:  # update appearance
                 await self.reset_appearance()
+        self.logger.debug(f"keep alived using method {choice}")
 
     async def ChatRoomChat(self, msg, **kwargs):
         data = {"Content": msg, "Type": "Chat", "Target": None}
@@ -429,9 +436,9 @@ class BOT:
         self.is_logged_in = False
         self.player = {}
         try:
-            if self.sender:
-                self.sender.cancel()  # stop sending events
-                self.sender = None
+            for n,t in self.background_tasks:
+                if t:
+                    t.cancel()
             if self.sio:  # delete socketio client
                 await self.sio.eio.disconnect()
                 self.sio = None
@@ -481,8 +488,7 @@ class BOT:
         )
         for i in Characters:
             self.logger.info(f"update {i['Name']}({i['MemberNumber']})'s data")
-            self.others[i["MemberNumber"]] = i
-
+            self.others[i["MemberNumber"]].update(i)
             # update ownership
             owner = i.get("Ownership", {})
             owner = owner.get("MemberNumber", 0) if owner else 0
@@ -563,7 +569,7 @@ class BOT:
         )
 
         self.logger.info(f"logged in as {self.player.get('Name')}")
-        self.others = {}
+        self.others = defaultdict(dict)
         self.is_logged_in = True
 
     async def ChatRoomSearchResponse(self, data):
@@ -584,51 +590,71 @@ class BOT:
     async def LoginQueue(self, data):
         await self.sio.sleep(10)
         await self.login()
-
+    
+    # self.sio.event decorator does not work inside class, so manually set it
+    # another way: https://github.com/miguelgrinberg/python-socketio/issues/390#issuecomment-787796871
+    
+    
     def register_handlers(self):
-        # self.sio.event decorator does not work inside class, so manually set it
-        # another way: https://github.com/miguelgrinberg/python-socketio/issues/390#issuecomment-787796871
+        # register catch_all as the listener
         async def catch_all(event: str, data: dict):
+            if event == "ServerInfo":
+                return
             if not data or len(json.dumps(data)) > 100:
                 self.logger.info(f"{event}")
-            elif event != "ServerInfo":
+            else:
                 self.logger.info(f"{event},{data}")
-
-            self.last_received = time.time()
-
-            match event:
-                case "connect":
-                    await self.connect()
-                case "disconnect":
-                    await self.disconnect()
-                case "LoginResponse":
-                    await self.LoginResponse(data)
-                case "ChatRoomSearchResponse":
-                    await self.ChatRoomSearchResponse(data)
-                case "AccountQueryResult":
-                    await self.AccountQueryResult(data)
-                case "ChatRoomMessage":
-                    await self.ChatRoomMessage(data)
-                case "ChatRoomSync":
-                    await self.ChatRoomSync(data)
-                case "ChatRoomSyncItem":
-                    await self.ChatRoomSyncItem(data)
-                case "ChatRoomSyncMemberLeave":
-                    await self.ChatRoomSyncMemberLeave(data)
-                case "ChatRoomSearchResult":
-                    self.update_chatroom(data)
-                case "ChatRoomSyncCharacter":
-                    await self.ChatRoomSyncCharacter(data)
-                case "ChatRoomSyncSingle":
-                    await self.ChatRoomSyncSingle(data)
-                case "ChatRoomSyncSingle":
-                    await self.ChatRoomSyncSingle(data)
-                case "LoginQueue":
-                    await self.LoginQueue(data)
-                case _:
-                    pass
+            await self.received_event_queue.put((event,data))
 
         self.sio.on("*", catch_all)
+        
+        # should run in background with asyncio.create_task
+        async def sio_event_handler():
+            while True:
+                # 避免被错误卡住
+                try: # super big try-except! 
+                    event,data = await self.received_event_queue.get()
+
+                    useful_event = True
+                    match event:
+                        case "connect":
+                            await self.connect()
+                        case "disconnect":
+                            await self.disconnect()
+                        case "LoginResponse":
+                            await self.LoginResponse(data)
+                        case "ChatRoomSearchResponse":
+                            await self.ChatRoomSearchResponse(data)
+                        case "AccountQueryResult":
+                            await self.AccountQueryResult(data)
+                        case "ChatRoomMessage":
+                            await self.ChatRoomMessage(data)
+                        case "ChatRoomSync":
+                            await self.ChatRoomSync(data)
+                        case "ChatRoomSyncItem":
+                            await self.ChatRoomSyncItem(data)
+                        case "ChatRoomSyncMemberLeave":
+                            await self.ChatRoomSyncMemberLeave(data)
+                        case "ChatRoomSearchResult":
+                            self.update_chatroom(data)
+                        case "ChatRoomSyncCharacter":
+                            await self.ChatRoomSyncCharacter(data)
+                        case "ChatRoomSyncSingle":
+                            await self.ChatRoomSyncSingle(data)
+                        case "LoginQueue":
+                            await self.LoginQueue(data)
+                        case _:
+                            useful_event = False
+                            pass
+                    self.logger.info(f"handler get {event}" + " useful" if useful_event else "useless")
+                    if useful_event:
+                        self.last_received = time.time() # 记录最后获得有效信息的时间
+                except Exception as err:
+                    self.logger.error(err)
+
+        return asyncio.create_task(sio_event_handler())
+    # ======================================== end of event handlers ==============================================================
+
 
     async def run_bot(self):
         while True:
@@ -655,15 +681,13 @@ class BOT:
                 )
                 await asyncio.sleep(3)
                 await self.reset_appearance()
-                self.background_tasks.append(asyncio.create_task(self.keep_alive()))
+                self.background_tasks['keep_alive'] = (asyncio.create_task(self.keep_alive()))
             else:
                 assert self.sio.connected and self.is_logged_in
                 self.logger.info(
                     "everything is done, waiting for other player's message"
                 )
                 await self.sio.wait()
-
-    # ======================================== end of event handlers ==============================================================
 
     # ======================================== custom actions =====================================================================
     async def do_extra_actions(self, data):
