@@ -488,7 +488,8 @@ class BOT:
         )
         for i in Characters:
             self.logger.info(f"update {i['Name']}({i['MemberNumber']})'s data")
-            self.others[i["MemberNumber"]].update(i)
+            # self.others[i["MemberNumber"]].update(i)
+            self.others[i["MemberNumber"]] = i
             # update ownership
             owner = i.get("Ownership", {})
             owner = owner.get("MemberNumber", 0) if owner else 0
