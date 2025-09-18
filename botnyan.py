@@ -629,6 +629,15 @@ async def main():
     print(
         "unless intended, the bot is stopped unexpectedly. please check your config and connection"
     )
+    for b in bots:
+        print(f"exiting {b}")
+        await b.exit_gracefully()
+    for t in tasks:
+        try:
+            print(f"closing {t}")
+            t.cancel()
+        except:
+            pass
 
 
 if __name__ == "__main__":

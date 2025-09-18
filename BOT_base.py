@@ -435,16 +435,22 @@ class BOT:
     async def exit_gracefully(self):
         self.is_logged_in = False
         self.player = {}
-        try:
-            for n,t in self.background_tasks:
+        
+        for n,t in self.background_tasks.items():
+            try:
                 if t:
                     t.cancel()
-            if self.sio:  # delete socketio client
+            except:
+                pass
+        if self.sio:  # delete socketio client
+            try:
                 await self.sio.eio.disconnect()
                 self.sio = None
-        finally:
-            # self.exit_with_error(1) # TODO: 不要直接结束进程。 但是async loop 依然有问题，只能暂时通过强制退出才能结束所有协程
-            pass
+            except:
+                pass
+
+        # self.exit_with_error(1) # TODO: 不要直接结束进程。 但是async loop 依然有问题，只能暂时通过强制退出才能结束所有协程
+
 
     # ======================================== event handlers ==============================================================
 
@@ -647,7 +653,7 @@ class BOT:
                         case _:
                             useful_event = False
                             pass
-                    self.logger.info(f"handler get {event}" + " useful" if useful_event else "useless")
+                    # self.logger.info(f"handler get {event}" + " useful" if useful_event else "useless")
                     if useful_event:
                         self.last_received = time.time() # 记录最后获得有效信息的时间
                 except Exception as err:
