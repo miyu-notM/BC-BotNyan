@@ -468,6 +468,32 @@ class BOTNyan(BOT):
             f"*BOT把{C.get('Nickname') or C.get('Name')}的胖次脱掉了", Type="Emote"
         )
 
+    async def strip_off(self,member_id, keep_underwears=False):
+        self.logger.info(f"try to strip {member_id}")
+        C = self.others.get(member_id, {})
+        appearance = C.get("Appearance")
+        if not appearance:
+            self.logger.warning("cannot find character {}".format(member_id))
+            return
+
+        # keep bra and panties if keep_underwears=True
+        extra_stripoff_group = ["Corset", "Socks","Gloves", "Garters", "Shoes"] \
+        if keep_underwears \
+        else ["Bra", "Corset", "Panties", "Socks","Gloves", "Garters", "Shoes"] # underwears + others that should be removed
+
+        filtered_a = [
+            i for i in appearance
+            if (group := i['Group']) 
+            and "Accessory" in group # all group containing Accessory is ignored, including ClothAccessory to avoid deleting cosplay accessories
+            or (group not in extra_stripoff_group and "Suit" not in group and "Cloth" not in group and "Item" not in group) # all other that are not clothes, underwears or items are kept
+        ]   # todo: optimize the rule
+        
+        await self.update_appearance(member_id,filtered_a)
+        await self.ChatRoomChat(
+            f"*BOT把{C.get('Nickname') or C.get('Name')}的衣服脱掉了", Type="Emote"
+        )
+
+    
     async def fake_mod(self, target=None):
         '''伪造[服装拓展](https://github.com/SugarChain-Studio/echo-clothing-ext)的广播，让bot能解除服装扩展的衣服'''
         
@@ -659,3 +685,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except:
         pass
+
