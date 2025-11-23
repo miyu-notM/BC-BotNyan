@@ -57,7 +57,7 @@ class BOTNyan(BOT):
     @override
     def register_handlers(self):
         self.sio.on("ChatRoomSyncMemberJoin", self.ChatRoomSyncMemberJoin)
-        super().register_handlers()
+        return super().register_handlers()
 
     @override
     async def do_extra_actions(self, data):

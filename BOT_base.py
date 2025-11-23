@@ -165,7 +165,7 @@ class BOT:
         C = self.others.get(member_id, None)
         # else we assume it is OnlineID
         assert C
-        data = {"ID": C["ID"], "ActivePost": pose, "Appearance": appearance}
+        data = {"ID": C["ID"], "ActivePose": pose, "Appearance": appearance}
         data.update(kwargs)
         # self.logger.debug(f"updating appearance {data}")
         event = event if event else "ChatRoomCharacterUpdate"
